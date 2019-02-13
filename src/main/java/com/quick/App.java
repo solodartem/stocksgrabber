@@ -1,4 +1,4 @@
-package com.apptopia;
+package com.quick;
 
 /**
  * Hello world!
