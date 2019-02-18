@@ -7,6 +7,8 @@ import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.firefox.FirefoxDriver;
+import org.openqa.selenium.firefox.FirefoxOptions;
 import org.openqa.selenium.remote.DesiredCapabilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,7 +31,9 @@ public class FinanceYahooGrabber {
     public static String tempFolder;
     public static String settingsFile;
     public static String downloadFolder;
-    private static ChromeDriver WEB_DRIVER;
+
+    private static DesiredCapabilities capabilities;
+    private static FirefoxOptions fireFoxOoptions;
 
     static private class Interval {
 
@@ -55,8 +59,8 @@ public class FinanceYahooGrabber {
     private static Random random = new Random();
 
     static public int gerRandomInterval() {
-        int min = 4;
-        int max = 15;
+        int min = 12;
+        int max = 25;
         return random.nextInt(max - min + 1) + min;
     }
 
@@ -87,13 +91,14 @@ public class FinanceYahooGrabber {
             String pageURL = getURL(interval);
             LOGGER.debug("Going to download page {}", pageURL);
 
+            FirefoxDriver WEB_DRIVER;
             try {
+                WEB_DRIVER = new FirefoxDriver(fireFoxOoptions); //new ChromeDriver(capabilities);
                 WEB_DRIVER.get(pageURL);
             } catch (WebDriverException e) {
                 LOGGER.debug("Unable to load page", e);
                 return -1;
             }
-            //
 
             List<WebElement> elements = null;
             int attemptsCount = 0;
@@ -105,15 +110,16 @@ public class FinanceYahooGrabber {
             } while (elements.size() == 0 && attemptsCount < 5);
 
             if (elements.size() != 1) {
-                LOGGER.error("Unable to get download URL from page: {}", pageURL);
+                LOGGER.error("Seems like no data on page {}", pageURL);
                 return -1;
             }
 
             elements.get(0).click();
-            Thread.sleep(2 * 1000);
+            Thread.sleep(5000);
             File file = GrabberFileUtils.moveDownloadedFile(downloadFolder, Paths.get(tempFolder, this.provider + interval.start + "_" + interval.end + ".csv").toFile());
             int result = mergeData(this.itervals.get(currentInterVal), file);
             currentInterVal++;
+            WEB_DRIVER.close();
             return result;
         } catch (InterruptedException e) {
             e.printStackTrace();
@@ -122,6 +128,10 @@ public class FinanceYahooGrabber {
     }
 
     private int mergeData(Interval interval, File csvDownloadedFile) {
+        if (csvDownloadedFile == null) {
+            LOGGER.debug("Seems no data for interval {}", interval);
+            return  -1;
+        }
         LOGGER.debug("Merging data from file {}", csvDownloadedFile.getAbsoluteFile());
         try {
             List<String> lines = FileUtils.readLines(csvDownloadedFile, "UTF-8");
@@ -173,10 +183,21 @@ public class FinanceYahooGrabber {
         System.setProperty("webdriver.chrome.driver", driverFile.getAbsolutePath());
         LOGGER.debug("Loaded chrome WEB_DRIVER {}", driverFile.getAbsoluteFile());
 
-        DesiredCapabilities capabilities = DesiredCapabilities.chrome();
+         fireFoxOoptions = new FirefoxOptions();
+        fireFoxOoptions.addPreference("browser.download.folderList", 2);
+        fireFoxOoptions.addPreference("browser.download.dir", downloadFolder);
+        fireFoxOoptions.addPreference("browser.download.useDownloadDir", true);
+        fireFoxOoptions.addPreference("browser.helperApps.neverAsk.saveToDisk", "application/pdf");
+        fireFoxOoptions.addPreference("pdfjs.disabled", true);  // disable the built-in PDF viewer
+
+        
+        driverFile = new File("src/resources/geckodriver.exe");
+        System.setProperty("webdriver.gecko.driver", driverFile.getAbsolutePath());
+        LOGGER.debug("Loaded firefox WEB_DRIVER {}", driverFile.getAbsoluteFile());
+
+        capabilities = DesiredCapabilities.chrome();
         capabilities.setCapability(ChromeOptions.CAPABILITY, options);
 
-        WEB_DRIVER = new ChromeDriver(capabilities);
     }
 
     static private int grabProvider(String provider) {
@@ -193,7 +214,9 @@ public class FinanceYahooGrabber {
             LOGGER.debug("Wake up from sleeping thread!!");
 
             int result = grabber.loadAndParseCurrentInterval();
-
+            if (result == -1) {
+                continue;
+            }
             totallyRecordsMerged += result;
             if (result == -1) {
                 grabber.outputFile.delete();
@@ -205,20 +228,40 @@ public class FinanceYahooGrabber {
         return totallyRecordsMerged;
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         loadSettings();
-        File reportFile = Paths.get(outputFolder, "report.txt").toFile();
-        if (reportFile.exists()) {
-            reportFile.delete();
-        }
 
         Map<String, Integer> providerResults = new HashMap<>();
+
+        // Clean download folder
+
+        File downloadFolderFile = Paths.get(downloadFolder).toFile();
+        if (downloadFolderFile.exists()) {
+            for (String file : downloadFolderFile.list()) {
+                Paths.get(downloadFolder, file).toFile().delete();
+            }
+        }
+
+        // load reports
+        File reportFile = Paths.get(outputFolder, "report.txt").toFile();
+        if (reportFile.exists()) {
+            List<String> reports = FileUtils.readLines(reportFile, "UTF-8");
+            for (String report : reports) {
+                providerResults.put(report.split(",")[0], Integer.parseInt(report.split(",")[1]));
+            }
+        }
+
+        // grab data
         try {
             List<String> providers = FileUtils.readLines(Paths.get(settingsFile).toFile(), "UTF-8");
             for (String provider : providers) {
-                int providerMergedFiles = grabProvider(provider);
-                providerResults.put(provider, providerMergedFiles);
-                FileUtils.writeStringToFile(reportFile, String.join(",", provider, providerMergedFiles + newLine), "UTF-8", true);
+                if (providerResults.keySet().contains(provider)) {
+                    LOGGER.debug("Provider {} already loaded. Ignoring.", provider);
+                } else {
+                    int providerMergedFiles = grabProvider(provider);
+                    providerResults.put(provider, providerMergedFiles);
+                    FileUtils.writeStringToFile(reportFile, String.join(",", provider, providerMergedFiles + newLine), "UTF-8", true);
+                }
             }
         } catch (IOException e) {
             LOGGER.debug("Settings file {} not found.", settingsFile);

@@ -10,14 +10,8 @@ import java.nio.file.Paths;
 
 public class GrabberFileUtils {
 
-    private static final int CONNECT_TIMEOUT = 1 * 1000;
-    private static final int READ_TIMEOUT = 2 * 1000;
     private static final Logger LOGGER = LoggerFactory.getLogger(GrabberFileUtils.class);
 
-    static public File getResourceFile(String fileName) {
-        ClassLoader classLoader = GrabberFileUtils.class.getClassLoader();
-        return new File(classLoader.getResource(fileName).getFile());
-    }
 
     static public File moveDownloadedFile(String downloadFolder, File destinationFile) {
         File downloadFolderFile = new File(downloadFolder);
@@ -26,6 +20,7 @@ public class GrabberFileUtils {
             LOGGER.error("Unable to find downloaded file.");
             return null;
         }
+
         File sourceFile = null;
         try {
             sourceFile = Paths.get(downloadFolder, downloadedFiles[0]).toFile();
